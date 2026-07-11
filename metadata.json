@@ -1,0 +1,6 @@
+{
+  "name": "Botany Nexus DGC",
+  "description": "An ultra-premium digital botanical archive and student directory for the Department of Botany, Dinajpur Government College (Session 2025-2026), featuring museum-grade curation, plant discovery showcases, and researcher profiles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

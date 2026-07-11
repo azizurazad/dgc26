@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Safeguard to prevent "TypeError: Cannot set property fetch of #<Window> which has only a getter"
+      // in sandbox environments/iframes where window.fetch has only a getter.
+      (function() {
+        try {
+          var originalFetch = window.fetch || globalThis.fetch || self.fetch;
+          if (originalFetch) {
+            var currentFetch = originalFetch;
+            var getter = function() { return currentFetch; };
+            var setter = function(val) { currentFetch = val; };
+
+            var targets = [
+              window,
+              globalThis,
+              self,
+              typeof Window !== 'undefined' ? Window.prototype : null,
+              window.__proto__,
+              globalThis.__proto__,
+              self.__proto__,
+              typeof EventTarget !== 'undefined' ? EventTarget.prototype : null
+            ];
+
+            targets.forEach(function(target) {
+              if (!target) return;
+              try {
+                Object.defineProperty(target, 'fetch', {
+                  get: getter,
+                  set: setter,
+                  configurable: true,
+                  enumerable: true
+                });
+              } catch (e) {}
+            });
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <title>Botany Nexus DGC | Department of Botany</title>
+    
+    <!-- Primary Metadata -->
+    <meta name="title" content="Botany Nexus DGC" />
+    <meta name="description" content="Department of Botany, Dinajpur Government College, Session 2025–2026" />
+    <meta name="keywords" content="Botany, Dinajpur Government College, Plants, Research, Herbarium, Student Community" />
+    
+    <!-- Theme Configuration -->
+    <meta name="theme-color" content="#0B2E20" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- Open Graph / Facebook / Messenger / WhatsApp / Discord / Telegram -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Botany Nexus DGC" />
+    <meta property="og:description" content="Department of Botany, Dinajpur Government College, Session 2025–2026" />
+    <meta property="og:image" content="/logo-512.png" />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:title" content="Botany Nexus DGC" />
+    <meta property="twitter:description" content="Department of Botany, Dinajpur Government College, Session 2025–2026" />
+    <meta property="twitter:image" content="/logo-512.png" />
+
+    <!-- Favicon & PWA Icons -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

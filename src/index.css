@@ -1,0 +1,73 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-bg-luxury: #0B0B0B;
+  --color-surface-luxury: #111111;
+  --color-text-primary: #F5F2EE;
+  --color-accent-gold: #C79A6B;
+  --color-accent-gold-dark: #8F6A48;
+  --color-botanical-green: #1F3D2B;
+  --color-border-gold: rgba(199, 154, 107, 0.2);
+  
+  --font-sans: "Helvetica Neue", Arial, "Inter", sans-serif;
+  --font-serif: "Georgia", "Cormorant Garamond", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Custom global styles for Natural Tones theme feeling */
+html, body {
+  background-color: #0B0B0B;
+  color: #F5F2EE;
+  font-family: "Helvetica Neue", Arial, "Inter", sans-serif;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar matching editorial style */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0B0B0B;
+}
+::-webkit-scrollbar-thumb {
+  background: #C79A6B;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #8F6A48;
+}
+
+/* Natural Tones styling helpers */
+.luxury-border {
+  border: 1px solid rgba(199, 154, 107, 0.2);
+}
+
+.italic-accent {
+  font-style: italic;
+  color: #C79A6B;
+}
+
+.micro-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: #8F6A48;
+  font-weight: 600;
+}
+
+/* Custom fog, light, and natural botanical gradient effects */
+.fog-layer {
+  background: radial-gradient(circle at 30% 30%, #1F3D2B 0%, transparent 70%);
+}
+
+.light-spotlight {
+  background: radial-gradient(ellipse at 50% 0%, rgba(199, 154, 107, 0.15) 0%, transparent 60%);
+}
+
+.text-gold-gradient {
+  background: linear-gradient(135deg, #F5F2EE 30%, #C79A6B 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
