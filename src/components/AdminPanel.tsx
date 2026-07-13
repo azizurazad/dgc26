@@ -3,9 +3,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   BarChart3, Users, Leaf, Image, FileText, Heart, Settings as SettingsIcon,
   Plus, Edit2, Trash2, Save, X, RefreshCw, Upload, Check, AlertTriangle,
-  Award, Trophy, Search, ShieldCheck, Calendar, MapPin, Clock, Video, UserCheck, Camera
+  Award, Trophy, Search, ShieldCheck, Calendar, MapPin, Clock, Video, UserCheck, Camera,
+  Bell, Send, Mail
 } from 'lucide-react';
-import { Plant, Student, GalleryItem, AcademicNote, Contributor, AppStats, DepartmentEvent } from '../types';
+import { Plant, Student, GalleryItem, AcademicNote, Contributor, AppStats, DepartmentEvent, AppNotification } from '../types';
 import { uploadFileToStorage } from '../lib/firebase';
 
 const DEFAULT_SUBJECTS = [
@@ -107,9 +108,14 @@ interface AdminPanelProps {
   
   userRole?: 'Admin' | 'CR' | 'super_admin';
   currentUser?: Student | null;
+
+  notifications?: AppNotification[];
+  onAddNotification?: (n: AppNotification) => void;
+  onEditNotification?: (n: AppNotification) => void;
+  onDeleteNotification?: (id: string) => void;
 }
 
-type AdminModule = 'dashboard' | 'plants' | 'community' | 'events' | 'gallery' | 'resources' | 'settings';
+type AdminModule = 'dashboard' | 'plants' | 'community' | 'events' | 'gallery' | 'resources' | 'notifications' | 'settings';
 
 export default function AdminPanel({
   stats, onUpdateStats,
@@ -127,7 +133,11 @@ export default function AdminPanel({
   philosophyImage, onUpdatePhilosophyImage,
   onLogout,
   userRole = 'Admin',
-  currentUser = null
+  currentUser = null,
+  notifications = [],
+  onAddNotification = () => {},
+  onEditNotification = () => {},
+  onDeleteNotification = () => {}
 }: AdminPanelProps) {
   const [activeModule, setActiveModule] = useState<AdminModule>('dashboard');
   const [communityTab, setCommunityTab] = useState<'student' | 'contributor' | 'achievement' | 'settings'>('student');
@@ -219,6 +229,22 @@ export default function AdminPanel({
   };
 
   const [contributorForm, setContributorForm] = useState<Partial<Contributor>>({});
+  
+  // Custom states for notifications
+  const [notificationForm, setNotificationForm] = useState<Partial<AppNotification>>({
+    title: '',
+    message: '',
+    category: 'General',
+    targetAudience: 'All Students',
+    priority: 'Normal',
+    readBy: [],
+    sentBy: 'Admin'
+  });
+  const [notifSearch, setNotifSearch] = useState('');
+  const [notifCategoryFilter, setNotifCategoryFilter] = useState('all');
+  const [notifAudienceFilter, setNotifAudienceFilter] = useState('all');
+  const [notifPriorityFilter, setNotifPriorityFilter] = useState('all');
+  const [deleteConfirmNotification, setDeleteConfirmNotification] = useState<AppNotification | null>(null);
   
   // Custom state for safe modal-based mentor deletion confirmation (bypasses iframe native confirm issues)
   const [deleteConfirmMentor, setDeleteConfirmMentor] = useState<Contributor | null>(null);
@@ -361,12 +387,16 @@ export default function AdminPanel({
     { id: 'community', name: 'Community', icon: Users },
     { id: 'events', name: 'Department Events', icon: Image },
     { id: 'resources', name: 'Academic Notes', icon: FileText },
+    { id: 'notifications', name: 'Notification Center', icon: Bell },
     { id: 'settings', name: 'Settings', icon: SettingsIcon },
   ] as const;
 
   const menuItems = rawMenuItems.filter(item => {
     if (userRole === 'CR') {
-      return item.id !== 'community' && item.id !== 'settings';
+      return item.id !== 'community' && item.id !== 'settings' && item.id !== 'notifications';
+    }
+    if (userRole !== 'super_admin') {
+      return item.id !== 'notifications';
     }
     return true;
   });
@@ -2935,6 +2965,458 @@ export default function AdminPanel({
 
 
 
+        {activeModule === 'notifications' && (
+          <div className="space-y-6 animate-fade-in text-left">
+            <div className="flex justify-between items-center border-b border-[#C79A6B]/15 pb-4">
+              <div>
+                <h2 className="font-serif text-2xl font-light text-[#F5F2EE]">
+                  🔔 Notification <span className="font-serif italic text-[#C79A6B]">Center</span>
+                </h2>
+                <p className="text-[10px] font-mono text-[#8F6A48] tracking-widest uppercase mt-0.5">
+                  Send live push notifications and alerts to matching cohorts & student devices
+                </p>
+              </div>
+              
+              {!isAddingNew && !editingId && (
+                <button
+                  onClick={() => {
+                    setNotificationForm({
+                      title: '',
+                      message: '',
+                      category: 'General',
+                      targetAudience: 'All Students',
+                      priority: 'Normal',
+                      readBy: [],
+                      sentBy: currentUser?.name || 'Admin'
+                    });
+                    setIsAddingNew(true);
+                  }}
+                  className="px-4 py-2 border border-[#C79A6B] bg-[#C79A6B]/10 hover:bg-[#C79A6B] text-[10px] font-mono tracking-widest uppercase rounded flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Plus className="w-4 h-4" /> Create Notification
+                </button>
+              )}
+            </div>
+
+            {/* Form Drawer (Adding or Editing) */}
+            {(isAddingNew || editingId) && (
+              <div className="bg-[#0B0B0B]/80 border border-[#C79A6B]/20 rounded p-6 md:p-8 space-y-6">
+                <div className="flex justify-between items-center border-b border-[#C79A6B]/15 pb-3">
+                  <h4 className="font-serif text-lg text-[#C79A6B] uppercase tracking-wider">
+                    {editingId ? 'Edit Dispatched Notification' : 'Compose Live Push Broadcast'}
+                  </h4>
+                  <button 
+                    onClick={() => {
+                      setIsAddingNew(false);
+                      setEditingId(null);
+                    }}
+                    className="p-1 text-[#8F6A48] hover:text-[#F5F2EE]"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Left Column Fields */}
+                  <div className="space-y-5">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block">Notification Title *</label>
+                      <input 
+                        type="text" 
+                        value={notificationForm.title || ''}
+                        onChange={(e) => setNotificationForm({ ...notificationForm, title: e.target.value })}
+                        className="w-full bg-[#111111] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-[#F5F2EE] p-2.5 rounded outline-none" 
+                        placeholder="e.g. Practical Exam Schedule"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block">Message Body *</label>
+                      <textarea 
+                        value={notificationForm.message || ''}
+                        onChange={(e) => setNotificationForm({ ...notificationForm, message: e.target.value })}
+                        rows={5}
+                        className="w-full bg-[#111111] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-[#F5F2EE] p-2.5 rounded outline-none font-sans" 
+                        placeholder="Detailed message description..."
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block">Category</label>
+                        <select
+                          value={notificationForm.category || 'General'}
+                          onChange={(e: any) => setNotificationForm({ ...notificationForm, category: e.target.value })}
+                          className="w-full bg-[#111111] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-[#F5F2EE] p-2.5 rounded outline-none font-mono text-[#C79A6B]"
+                        >
+                          {['Notice', 'Event', 'Seminar', 'Workshop', 'Practical', 'Exam', 'Result', 'Emergency', 'General'].map(cat => (
+                            <option key={cat} value={cat} className="bg-[#111111] text-white font-mono">{cat}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block">Priority</label>
+                        <select
+                          value={notificationForm.priority || 'Normal'}
+                          onChange={(e: any) => setNotificationForm({ ...notificationForm, priority: e.target.value })}
+                          className="w-full bg-[#111111] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-[#F5F2EE] p-2.5 rounded outline-none font-mono text-[#C79A6B]"
+                        >
+                          {['Low', 'Normal', 'High', 'Emergency'].map(prio => (
+                            <option key={prio} value={prio} className="bg-[#111111] text-white font-mono">{prio}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column Fields */}
+                  <div className="space-y-5">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block font-bold">Target Audience *</label>
+                      <select
+                        value={notificationForm.targetAudience || 'All Students'}
+                        onChange={(e: any) => setNotificationForm({ 
+                          ...notificationForm, 
+                          targetAudience: e.target.value,
+                          targetBatch: e.target.value === 'Selected Batch' ? (students[0]?.batch || '') : undefined,
+                          targetStudents: e.target.value === 'Selected Students' ? [] : undefined
+                        })}
+                        className="w-full bg-[#111111] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-[#F5F2EE] p-2.5 rounded outline-none font-mono text-[#C79A6B]"
+                      >
+                        {['All Students', 'Selected Batch', 'Selected Students'].map(aud => (
+                          <option key={aud} value={aud} className="bg-[#111111] text-white font-mono">{aud}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Conditional: Target Batch */}
+                    {notificationForm.targetAudience === 'Selected Batch' && (
+                      <div className="space-y-1.5 p-3 bg-[#111111]/40 border border-[#C79A6B]/15 rounded animate-fade-in">
+                        <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block">Select Target Batch *</label>
+                        <select
+                          value={notificationForm.targetBatch || ''}
+                          onChange={(e) => setNotificationForm({ ...notificationForm, targetBatch: e.target.value })}
+                          className="w-full bg-[#111111] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-[#F5F2EE] p-2 rounded outline-none font-mono"
+                        >
+                          {Array.from(new Set(students.map(s => s.batch).filter(Boolean))).map(batch => (
+                            <option key={batch} value={batch} className="bg-[#111111] text-white font-mono">{batch}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Conditional: Target Students (Search + Checklist) */}
+                    {notificationForm.targetAudience === 'Selected Students' && (
+                      <div className="space-y-2 p-3 bg-[#111111]/40 border border-[#C79A6B]/15 rounded animate-fade-in flex flex-col max-h-[220px]">
+                        <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block">Select Recipients *</label>
+                        
+                        {/* Student micro search */}
+                        <input
+                          type="text"
+                          placeholder="Search students by name / roll..."
+                          className="w-full bg-[#0B0B0B] border border-[#C79A6B]/20 text-[11px] p-2 rounded outline-none"
+                          onChange={(e) => {
+                            (e.target as any)._query = e.target.value;
+                            setNotificationForm({ ...notificationForm }); // force update list
+                          }}
+                          id="recipients-search"
+                        />
+                        
+                        <div className="overflow-y-auto space-y-1.5 flex-grow pr-1">
+                          {(() => {
+                            const query = (document.getElementById('recipients-search') as any)?._query || '';
+                            const filtered = students.filter(s => 
+                              s.name.toLowerCase().includes(query.toLowerCase()) || 
+                              s.rollNumber?.toLowerCase().includes(query.toLowerCase())
+                            );
+                            
+                            return filtered.map(student => {
+                              const isChecked = (notificationForm.targetStudents || []).includes(student.id);
+                              return (
+                                <label key={student.id} className="flex items-center gap-2.5 p-1.5 hover:bg-[#111111] rounded cursor-pointer select-none">
+                                  <input 
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => {
+                                      let list = [...(notificationForm.targetStudents || [])];
+                                      if (isChecked) {
+                                        list = list.filter(id => id !== student.id);
+                                      } else {
+                                        list.push(student.id);
+                                      }
+                                      setNotificationForm({ ...notificationForm, targetStudents: list });
+                                    }}
+                                    className="accent-[#C79A6B]"
+                                  />
+                                  <div className="flex items-center gap-2">
+                                    <img src={student.photoUrl || '/src/assets/logo.svg'} className="w-5 h-5 rounded-full object-cover border border-[#C79A6B]/20" referrerPolicy="no-referrer" />
+                                    <span className="text-xs text-white truncate max-w-[150px]">{student.name}</span>
+                                    <span className="text-[9px] font-mono text-[#8F6A48]">(Roll: {student.rollNumber})</span>
+                                  </div>
+                                </label>
+                              );
+                            });
+                          })()}
+                        </div>
+                        <div className="text-[9px] font-mono text-[#8F6A48] border-t border-[#C79A6B]/10 pt-1.5">
+                          Selected: {(notificationForm.targetStudents || []).length} recipient(s)
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block">Scheduled Date (Optional)</label>
+                        <input 
+                          type="datetime-local" 
+                          value={notificationForm.scheduledDate || ''}
+                          onChange={(e) => setNotificationForm({ ...notificationForm, scheduledDate: e.target.value })}
+                          className="w-full bg-[#111111] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-[#F5F2EE] p-2.5 rounded outline-none font-mono" 
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block">Alert Icon Image URL</label>
+                        <input 
+                          type="text" 
+                          value={notificationForm.imageUrl || ''}
+                          onChange={(e) => setNotificationForm({ ...notificationForm, imageUrl: e.target.value })}
+                          className="w-full bg-[#111111] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-[#F5F2EE] p-2.5 rounded outline-none font-mono" 
+                          placeholder="Image URL or empty for logo..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-[#C79A6B]/15 flex justify-end gap-3">
+                  <button 
+                    onClick={() => {
+                      setIsAddingNew(false);
+                      setEditingId(null);
+                    }}
+                    className="px-5 py-2 border border-[#C79A6B]/10 hover:border-[#C79A6B]/40 bg-transparent text-[10px] font-mono text-[#8F6A48] uppercase rounded cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (!notificationForm.title || !notificationForm.message) {
+                        triggerAlert('Please fill out all required fields marked with *', 'error');
+                        return;
+                      }
+                      if (notificationForm.targetAudience === 'Selected Students' && (!notificationForm.targetStudents || notificationForm.targetStudents.length === 0)) {
+                        triggerAlert('Please select at least one recipient student.', 'error');
+                        return;
+                      }
+
+                      if (editingId) {
+                        onEditNotification({ 
+                          ...notificationForm, 
+                          id: editingId 
+                        } as AppNotification);
+                        triggerAlert('Notification configurations updated successfully');
+                      } else {
+                        const newNotif: AppNotification = {
+                          ...notificationForm,
+                          id: `notif-${Date.now()}`,
+                          createdAt: Date.now(),
+                          readBy: [],
+                          sentBy: currentUser?.name || 'Admin'
+                        } as AppNotification;
+                        onAddNotification(newNotif);
+                        triggerAlert('Broadcast dispatched to student queue');
+                      }
+                      setIsAddingNew(false);
+                      setEditingId(null);
+                    }}
+                    className="px-6 py-2.5 bg-[#C79A6B] text-[#0B0B0B] text-[10px] font-mono font-bold tracking-widest uppercase rounded cursor-pointer flex items-center gap-1.5 hover:bg-opacity-95"
+                  >
+                    <Send className="w-3.5 h-3.5" /> Dispatch Alert
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* List Table of notifications */}
+            <div className="space-y-4">
+              {/* Filter Row */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 bg-[#111111]/50 border border-[#C79A6B]/15 p-4 rounded text-xs">
+                <div className="flex flex-col gap-1 text-left col-span-1 sm:col-span-1">
+                  <span className="text-[9px] font-mono text-[#8F6A48] uppercase tracking-wider">Search Broadcasts</span>
+                  <input 
+                    type="text" 
+                    value={notifSearch}
+                    onChange={(e) => setNotifSearch(e.target.value)}
+                    placeholder="Search by title, body..."
+                    className="bg-[#0B0B0B] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-white p-2 rounded outline-none"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1 text-left">
+                  <span className="text-[9px] font-mono text-[#8F6A48] uppercase tracking-wider">Filter Category</span>
+                  <select
+                    value={notifCategoryFilter}
+                    onChange={(e) => setNotifCategoryFilter(e.target.value)}
+                    className="bg-[#0B0B0B] border border-[#C79A6B]/25 text-xs text-white p-2 rounded outline-none font-mono text-[#C79A6B]"
+                  >
+                    <option value="all">All Categories</option>
+                    {['Notice', 'Event', 'Seminar', 'Workshop', 'Practical', 'Exam', 'Result', 'Emergency', 'General'].map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1 text-left">
+                  <span className="text-[9px] font-mono text-[#8F6A48] uppercase tracking-wider">Filter Audience</span>
+                  <select
+                    value={notifAudienceFilter}
+                    onChange={(e) => setNotifAudienceFilter(e.target.value)}
+                    className="bg-[#0B0B0B] border border-[#C79A6B]/25 text-xs text-white p-2 rounded outline-none font-mono text-[#C79A6B]"
+                  >
+                    <option value="all">All Audiences</option>
+                    <option value="All Students">All Students</option>
+                    <option value="Selected Batch">Selected Batch</option>
+                    <option value="Selected Students">Selected Students</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1 text-left">
+                  <span className="text-[9px] font-mono text-[#8F6A48] uppercase tracking-wider">Filter Priority</span>
+                  <select
+                    value={notifPriorityFilter}
+                    onChange={(e) => setNotifPriorityFilter(e.target.value)}
+                    className="bg-[#0B0B0B] border border-[#C79A6B]/25 text-xs text-white p-2 rounded outline-none font-mono text-[#C79A6B]"
+                  >
+                    <option value="all">All Priorities</option>
+                    <option value="Low">Low</option>
+                    <option value="Normal">Normal</option>
+                    <option value="High">High</option>
+                    <option value="Emergency">Emergency</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Table rendering list */}
+              <div className="overflow-x-auto bg-[#0B0B0B]/50 border border-[#C79A6B]/15 rounded">
+                <table className="w-full text-left text-xs divide-y divide-[#C79A6B]/15 select-text">
+                  <thead>
+                    <tr className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest bg-[#111111]">
+                      <th className="p-4">Dispatched ID</th>
+                      <th className="p-4">Broadcast Content</th>
+                      <th className="p-4">Recipient Target</th>
+                      <th className="p-4">Delivery Rate</th>
+                      <th className="p-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#C79A6B]/10">
+                    {(() => {
+                      const filtered = notifications.filter(n => {
+                        const matchesSearch = n.title.toLowerCase().includes(notifSearch.toLowerCase()) || n.message.toLowerCase().includes(notifSearch.toLowerCase());
+                        const matchesCat = notifCategoryFilter === 'all' || n.category === notifCategoryFilter;
+                        const matchesAud = notifAudienceFilter === 'all' || n.targetAudience === notifAudienceFilter;
+                        const matchesPrio = notifPriorityFilter === 'all' || n.priority === notifPriorityFilter;
+                        return matchesSearch && matchesCat && matchesAud && matchesPrio;
+                      });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={5} className="p-8 text-center text-[#8F6A48] font-mono text-xs">
+                              🔔 No active push notifications in queue. Create one to broadcast.
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return filtered.map((notif) => {
+                        // Calculate metrics
+                        let targetCount = students.length;
+                        if (notif.targetAudience === 'Selected Batch') {
+                          targetCount = students.filter(s => s.batch === notif.targetBatch).length;
+                        } else if (notif.targetAudience === 'Selected Students') {
+                          targetCount = notif.targetStudents?.length || 0;
+                        }
+                        
+                        const readCount = notif.readBy?.length || 0;
+                        const deliveryPercent = targetCount > 0 ? Math.round((readCount / targetCount) * 100) : 0;
+
+                        // Priority badges
+                        const priorityColors: Record<string, string> = {
+                          Emergency: 'text-red-400 border-red-500/30 bg-red-950/20',
+                          High: 'text-amber-400 border-amber-500/30 bg-amber-950/20',
+                          Normal: 'text-emerald-400 border-[#C79A6B]/30 bg-emerald-950/10',
+                          Low: 'text-gray-400 border-gray-500/20 bg-gray-900/10'
+                        };
+
+                        return (
+                          <tr key={notif.id} className="hover:bg-[#111111]/30 transition-colors">
+                            <td className="p-4 font-mono text-[10px] text-[#C79A6B]">{notif.id.toUpperCase()}</td>
+                            <td className="p-4 space-y-1 max-w-sm text-left">
+                              <div className="flex items-center gap-2">
+                                <span className="font-serif text-[#F5F2EE] font-semibold text-sm">{notif.title}</span>
+                                <span className="text-[8px] font-mono uppercase px-1.5 py-0.5 rounded border border-[#C79A6B]/20 text-[#C79A6B] bg-[#111111]">
+                                  {notif.category}
+                                </span>
+                                <span className={`text-[8px] font-mono uppercase px-1.5 py-0.5 rounded border ${priorityColors[notif.priority] || 'text-white'}`}>
+                                  {notif.priority}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-[#F5F2EE]/60 truncate font-light leading-relaxed">{notif.message}</p>
+                              <p className="text-[9px] font-mono text-[#8F6A48]/70">
+                                Dispatched on {new Date(notif.createdAt).toLocaleDateString()} {new Date(notif.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                              </p>
+                            </td>
+                            <td className="p-4 space-y-1 text-left">
+                              <p className="text-xs text-white">{notif.targetAudience}</p>
+                              {notif.targetAudience === 'Selected Batch' && (
+                                <p className="text-[9px] font-mono text-[#C79A6B]">Batch: {notif.targetBatch}</p>
+                              )}
+                              {notif.targetAudience === 'Selected Students' && (
+                                <p className="text-[9px] font-mono text-[#C79A6B]">Specific ({notif.targetStudents?.length} cohort)</p>
+                              )}
+                            </td>
+                            <td className="p-4 space-y-1.5 min-w-[120px]">
+                              <div className="flex justify-between items-center text-[10px] font-mono">
+                                <span className="text-white font-bold">{readCount} / {targetCount} read</span>
+                                <span className="text-[#C79A6B]">{deliveryPercent}%</span>
+                              </div>
+                              <div className="w-full h-1 bg-[#1A1A1A] rounded-full overflow-hidden border border-[#C79A6B]/10">
+                                <div className="h-full bg-[#C79A6B]" style={{ width: `${deliveryPercent}%` }} />
+                              </div>
+                            </td>
+                            <td className="p-4 text-right flex items-center justify-end gap-2.5">
+                              <button
+                                onClick={() => {
+                                  setNotificationForm(notif);
+                                  setEditingId(notif.id);
+                                  setIsAddingNew(false);
+                                }}
+                                className="p-1.5 text-[#C79A6B] hover:text-white hover:bg-[#111111] rounded cursor-pointer transition-colors"
+                                title="Edit Broadcast Rules"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => setDeleteConfirmNotification(notif)}
+                                className="p-1.5 text-red-400 hover:text-red-200 hover:bg-[#111111] rounded cursor-pointer transition-colors"
+                                title="Revoke Broadcast"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeModule === 'settings' && (
           <div className="space-y-8 animate-fade-in">
             <div className="border-b border-[#C79A6B]/15 pb-4">
@@ -3452,6 +3934,61 @@ export default function AdminPanel({
                 className="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded transition-all cursor-pointer"
               >
                 Revoke & Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Notification Delete Confirmation Modal */}
+      {deleteConfirmNotification && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in text-left font-sans">
+          <div className="w-full max-w-md bg-[#0D0D0D] border border-red-500/30 rounded p-6 md:p-8 space-y-6 shadow-2xl relative">
+            <button 
+              onClick={() => setDeleteConfirmNotification(null)} 
+              className="absolute top-4 right-4 text-[#8F6A48] hover:text-[#F5F2EE] transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            
+            <div className="space-y-3">
+              <div className="w-12 h-12 rounded-full bg-red-950/40 border border-red-500/30 flex items-center justify-center text-red-400">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <h4 className="font-serif text-lg font-light text-[#F5F2EE]">
+                Revoke <span className="italic text-red-400">Push Notification</span>
+              </h4>
+              <p className="text-[9px] text-[#8F6A48] font-mono uppercase tracking-wider">
+                This will remove the alert from all recipient feeds permanently
+              </p>
+            </div>
+
+            <div className="p-4 bg-red-950/15 border border-red-500/10 rounded text-xs text-[#F5F2EE]/80 space-y-2">
+              <p>Are you sure you want to permanently delete this broadcast notification?</p>
+              <div className="pt-2 border-t border-red-500/10">
+                <p className="font-serif font-bold text-white text-sm">{deleteConfirmNotification.title}</p>
+                <p className="font-mono text-[9px] text-[#8F6A48] mt-1">
+                  Category: {deleteConfirmNotification.category} • Priority: {deleteConfirmNotification.priority}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 font-mono text-[10px] uppercase tracking-wider">
+              <button
+                onClick={() => setDeleteConfirmNotification(null)}
+                className="px-4 py-2.5 border border-[#C79A6B]/20 text-[#8F6A48] hover:text-white rounded transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onDeleteNotification(deleteConfirmNotification.id);
+                  triggerAlert('Push notification broadcast successfully revoked', 'success');
+                  setDeleteConfirmNotification(null);
+                }}
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded transition-all cursor-pointer"
+              >
+                Delete & Revoke
               </button>
             </div>
           </div>

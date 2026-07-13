@@ -10,6 +10,7 @@ import {
   addDoc
 } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { getMessaging, getToken, onMessage, Messaging } from 'firebase/messaging';
 
 const firebaseConfig = {
   apiKey: "AIzaSyC_FHuBUvyRF1HSXHF_5OI5l8opBAb6ZSE",
@@ -24,6 +25,117 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+
+// Safe FCM Messenger access
+let messagingInstance: Messaging | null = null;
+
+export function getMessagingSafe(): Messaging | null {
+  if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+    try {
+      if (!messagingInstance) {
+        messagingInstance = getMessaging(app);
+      }
+      return messagingInstance;
+    } catch (e) {
+      console.warn("FCM messaging is not supported in this browser/environment context:", e);
+      return null;
+    }
+  }
+  return null;
+}
+
+export async function requestFcmToken(studentId: string): Promise<string | null> {
+  const messaging = getMessagingSafe();
+  if (!messaging) {
+    // Generate a secure, deterministic/re-usable fallback identifier for persistence
+    // inside the sandboxed iframe preview environment so the student document registers correctly.
+    const cleanId = studentId.replace(/[^a-zA-Z0-9]/g, '');
+    return `fcm-preview-device-${cleanId}-${navigator.userAgent.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)}`;
+  }
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      const token = await getToken(messaging, {
+        vapidKey: 'BBGN114UP9KO0vvCmpmj3QcgaQtdI0w8rZ2SrPQ9VhBnjkndTNBcS3KFlVEhJGVndHXJr1FXoIkx1P83TfINJXA'
+      });
+      return token;
+    }
+    return null;
+  } catch (error) {
+    console.error("Failed to retrieve true FCM Token, generating secure fallback:", error);
+    const cleanId = studentId.replace(/[^a-zA-Z0-9]/g, '');
+    return `fcm-preview-fallback-${cleanId}-${Math.random().toString(36).substring(2, 8)}`;
+  }
+}
+
+/**
+ * Broadcasts a push notification payload to targeted students' registration tokens via the FCM REST API.
+ */
+export async function sendFcmPushNotification(
+  tokens: string[],
+  title: string,
+  message: string,
+  category: string,
+  imageUrl?: string
+) {
+  // Filter out any mock tokens (like fcm-preview-device-*)
+  const realTokens = tokens.filter(t => t && !t.startsWith('fcm-preview-'));
+  if (realTokens.length === 0) {
+    console.log("No real FCM registration tokens available to send push notifications. Skipping FCM Legacy HTTP request.");
+    return { success: true, simulated: true, count: tokens.length };
+  }
+
+  // Get Server Key from environment or fallback
+  const serverKey = (import.meta as any).env.VITE_FCM_SERVER_KEY || '';
+  if (!serverKey) {
+    console.warn("VITE_FCM_SERVER_KEY is not defined in the environment. Real FCM push notifications cannot be routed without it.");
+    return { success: false, error: 'Missing VITE_FCM_SERVER_KEY' };
+  }
+
+  try {
+    const response = await fetch('https://fcm.googleapis.com/fcm/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `key=${serverKey}`
+      },
+      body: JSON.stringify({
+        registration_ids: realTokens,
+        notification: {
+          title: title,
+          body: message,
+          icon: '/logo.svg',
+          badge: '/favicon-16x16.png',
+          image: imageUrl || undefined,
+          sound: 'default'
+        },
+        data: {
+          category,
+          click_action: '/'
+        }
+      })
+    });
+    const result = await response.json();
+    console.log("FCM Legacy Broadcast response:", result);
+    return result;
+  } catch (error) {
+    console.error("Failed to send real FCM push notification:", error);
+    throw error;
+  }
+}
+
+export function onMessageListener(callback: (payload: any) => void) {
+  const messaging = getMessagingSafe();
+  if (!messaging) return () => {};
+  try {
+    return onMessage(messaging, (payload) => {
+      callback(payload);
+    });
+  } catch (e) {
+    console.warn("Could not register onMessage listener:", e);
+    return () => {};
+  }
+}
 
 let storageInstance: any = null;
 export function getStorageInstance() {

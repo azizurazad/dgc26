@@ -45,6 +45,8 @@ export interface Student {
   department?: string;
   createdDate?: string;
   isTemporaryPassword?: boolean;
+  fcmToken?: string;
+  fcmTokenStatus?: 'allowed' | 'blocked';
 }
 
 export interface GalleryItem {
@@ -156,6 +158,23 @@ export interface AppSettings {
   heroBgBlur: number;
   philosophyImage?: string;
 }
+
+export interface AppNotification {
+  id: string;
+  title: string;
+  message: string;
+  category: 'Notice' | 'Event' | 'Seminar' | 'Workshop' | 'Practical' | 'Exam' | 'Result' | 'Emergency' | 'General';
+  targetAudience: 'All Students' | 'Selected Batch' | 'Selected Students';
+  targetBatch?: string;
+  targetStudents?: string[];
+  priority: 'Low' | 'Normal' | 'High' | 'Emergency';
+  scheduledDate?: string;
+  imageUrl?: string;
+  createdAt: number;
+  readBy: string[];
+  sentBy: string;
+}
+
 
 
 

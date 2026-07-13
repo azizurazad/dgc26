@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Bell } from 'lucide-react';
 import { 
   syncCollection, 
   addFirestoreDoc, 
@@ -19,7 +20,7 @@ import PortalLogin from './components/PortalLogin';
 import AccessDenied from './components/AccessDenied';
 import Footer from './components/Footer';
 
-import { Plant, Student, GalleryItem, Contributor, AppStats, AcademicNote, DepartmentEvent, AppSettings } from './types';
+import { Plant, Student, GalleryItem, Contributor, AppStats, AcademicNote, DepartmentEvent, AppSettings, AppNotification } from './types';
 import AcademicNotes from './components/AcademicNotes';
 
 const INITIAL_SETTINGS: AppSettings = {
@@ -155,6 +156,12 @@ export default function App() {
 
   const [contributors, setContributors] = useState<Contributor[]>([]);
 
+  // Notifications states
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState<boolean>(false);
+  const [selectedNotificationDetail, setSelectedNotificationDetail] = useState<AppNotification | null>(null);
+  const [showPermissionPrompt, setShowPermissionPrompt] = useState<boolean>(false);
+
   const [stats, setStats] = useState<AppStats>({
     plantsCount: 0,
     studentsCount: 0,
@@ -188,6 +195,9 @@ export default function App() {
     const unsubEvents = syncCollection<DepartmentEvent>('events', [], setEvents);
     const unsubAcademicNotes = syncCollection<AcademicNote>('academic_notes', [], setAcademicNotes);
     const unsubContributors = syncCollection<Contributor>('contributors', [], setContributors);
+    const unsubNotifications = syncCollection<AppNotification>('notifications', [], (data) => {
+      setNotifications(data.sort((a, b) => b.createdAt - a.createdAt));
+    });
     const unsubStats = syncCollection<AppStats & { id: string }>(
       'stats',
       [{ plantsCount: 0, studentsCount: 0, resourcesCount: 0, fieldVisitsCount: 0, id: 'main_stats' }],
@@ -224,6 +234,7 @@ export default function App() {
       unsubEvents();
       unsubAcademicNotes();
       unsubContributors();
+      unsubNotifications();
       unsubStats();
       unsubSettings();
     };
@@ -299,6 +310,82 @@ export default function App() {
   // Stats updates
   const handleUpdateStats = (newStats: AppStats) => {
     updateFirestoreDoc('stats', { ...newStats, id: 'main_stats' });
+  };
+
+  // Notification mutators
+  const handleAddNotification = async (notif: AppNotification) => {
+    // 1. Save to Firestore
+    await addFirestoreDoc('notifications', notif);
+
+    // 2. Filter target students and collect their FCM tokens
+    let targetStudentsList = students;
+    if (notif.targetAudience === 'Selected Batch') {
+      targetStudentsList = students.filter(s => s.batch === notif.targetBatch);
+    } else if (notif.targetAudience === 'Selected Students') {
+      targetStudentsList = students.filter(s => notif.targetStudents?.includes(s.id));
+    }
+
+    // Collect all tokens that are defined
+    const fcmTokens = targetStudentsList
+      .map(s => s.fcmToken)
+      .filter((token): token is string => !!token);
+
+    if (fcmTokens.length > 0) {
+      try {
+        const { sendFcmPushNotification } = await import('./lib/firebase');
+        await sendFcmPushNotification(
+          fcmTokens,
+          notif.title,
+          notif.message,
+          notif.category,
+          notif.imageUrl
+        );
+      } catch (err) {
+        console.error('Error broadcasting push notification:', err);
+      }
+    }
+  };
+  const handleEditNotification = (notif: AppNotification) => {
+    updateFirestoreDoc('notifications', notif);
+  };
+  const handleDeleteNotification = (id: string) => {
+    deleteFirestoreDoc('notifications', id);
+  };
+
+  const handleMarkAsRead = async (notifId: string) => {
+    if (!currentUser) return;
+    const notif = notifications.find(n => n.id === notifId);
+    if (!notif) return;
+    
+    const readBy = notif.readBy || [];
+    if (!readBy.includes(currentUser.id)) {
+      const updatedReadBy = [...readBy, currentUser.id];
+      await updateFirestoreDoc('notifications', {
+        ...notif,
+        readBy: updatedReadBy
+      });
+    }
+  };
+
+  const handleMarkAllAsRead = async () => {
+    if (!currentUser) return;
+    const studentNotifs = notifications.filter(notif => {
+      if (currentUser.role === 'super_admin') return true;
+      if (notif.targetAudience === 'All Students') return true;
+      if (notif.targetAudience === 'Selected Batch' && notif.targetBatch === currentUser.batch) return true;
+      if (notif.targetAudience === 'Selected Students' && notif.targetStudents?.includes(currentUser.id)) return true;
+      return false;
+    });
+
+    for (const notif of studentNotifs) {
+      const readBy = notif.readBy || [];
+      if (!readBy.includes(currentUser.id)) {
+        await updateFirestoreDoc('notifications', {
+          ...notif,
+          readBy: [...readBy, currentUser.id]
+        });
+      }
+    }
   };
 
   // Plant mutators
@@ -491,6 +578,93 @@ export default function App() {
     };
   }, [currentView, isAuthenticated]);
 
+  const studentNotifications = notifications.filter(notif => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'super_admin') return true;
+    
+    if (notif.targetAudience === 'All Students') return true;
+    if (notif.targetAudience === 'Selected Batch' && notif.targetBatch === currentUser.batch) return true;
+    if (notif.targetAudience === 'Selected Students' && notif.targetStudents?.includes(currentUser.id)) return true;
+    
+    return false;
+  });
+
+  const unreadNotificationsCount = studentNotifications.filter(notif => 
+    !notif.readBy?.includes(currentUser?.id || '')
+  ).length;
+
+  const [activeToast, setActiveToast] = useState<{ title: string; message: string } | null>(null);
+
+  useEffect(() => {
+    // Listen for foreground FCM messages safely
+    import('./lib/firebase').then(({ onMessageListener }) => {
+      onMessageListener((payload: any) => {
+        if (payload?.notification) {
+          setActiveToast({
+            title: payload.notification.title || 'Notification Received',
+            message: payload.notification.body || ''
+          });
+          // Auto-dismiss in 6 seconds
+          setTimeout(() => {
+            setActiveToast(null);
+          }, 6000);
+        }
+      });
+    });
+  }, []);
+
+  // Trigger smart notification permission prompt for first time logged-in users
+  useEffect(() => {
+    if (isAuthenticated && currentUser) {
+      if (!currentUser.fcmTokenStatus) {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          // Permission already granted, silently retrieve and save token
+          import('./lib/firebase').then(async ({ requestFcmToken }) => {
+            const token = await requestFcmToken(currentUser.id);
+            if (token) {
+              const updatedUser = {
+                ...currentUser,
+                fcmToken: token,
+                fcmTokenStatus: 'allowed' as const
+              };
+              await updateFirestoreDoc('students', updatedUser);
+              setCurrentUser(updatedUser);
+              localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+            }
+          }).catch(err => console.error('Silent FCM registration error:', err));
+        } else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+          // Silently set blocked
+          const updatedUser = {
+            ...currentUser,
+            fcmTokenStatus: 'blocked' as const
+          };
+          updateFirestoreDoc('students', updatedUser);
+          setCurrentUser(updatedUser);
+          localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+        } else {
+          const timer = setTimeout(() => {
+            setShowPermissionPrompt(true);
+          }, 1500); // Wait 1.5s after login for high-end cinematic feel
+          return () => clearTimeout(timer);
+        }
+      } else if (currentUser.fcmTokenStatus === 'allowed' && !currentUser.fcmToken) {
+        // Status is allowed but token is missing, retrieve it
+        import('./lib/firebase').then(async ({ requestFcmToken }) => {
+          const token = await requestFcmToken(currentUser.id);
+          if (token) {
+            const updatedUser = {
+              ...currentUser,
+              fcmToken: token
+            };
+            await updateFirestoreDoc('students', updatedUser);
+            setCurrentUser(updatedUser);
+            localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+          }
+        }).catch(err => console.error('Silent token recovery error:', err));
+      }
+    }
+  }, [isAuthenticated, currentUser, students]);
+
   return (
     <div className="bg-[#0B0B0B] text-[#F5F2EE] min-h-screen relative font-sans">
       
@@ -512,6 +686,16 @@ export default function App() {
           isAuthenticated={isAuthenticated}
           currentUser={currentUser}
           onLogout={handlePortalLogout}
+          notifications={studentNotifications}
+          unreadNotificationsCount={unreadNotificationsCount}
+          isNotificationPanelOpen={isNotificationPanelOpen}
+          onToggleNotificationPanel={() => setIsNotificationPanelOpen(!isNotificationPanelOpen)}
+          onMarkAsRead={handleMarkAsRead}
+          onMarkAllAsRead={handleMarkAllAsRead}
+          onSelectNotification={(notif) => {
+            setSelectedNotificationDetail(notif);
+            setIsNotificationPanelOpen(false);
+          }}
         />
       )}
 
@@ -577,6 +761,10 @@ export default function App() {
                 onUpdateHeroBgBlur={handleUpdateHeroBgBlur}
                 philosophyImage={philosophyImage}
                 onUpdatePhilosophyImage={handleUpdatePhilosophyImage}
+                notifications={notifications}
+                onAddNotification={handleAddNotification}
+                onEditNotification={handleEditNotification}
+                onDeleteNotification={handleDeleteNotification}
                 userRole="super_admin"
                 currentUser={currentUser}
                 onLogout={() => {
@@ -725,6 +913,181 @@ export default function App() {
             }}
             onClose={() => setIsLoginOpen(false)}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Cinematic Botanical Push Notification Permission Dialog */}
+      <AnimatePresence>
+        {showPermissionPrompt && (
+          <div className="fixed inset-0 bg-[#070707]/90 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+              className="max-w-md w-full bg-[#0E0E0E] border border-[#C79A6B]/30 rounded p-8 text-center space-y-6 shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-transparent via-[#C79A6B] to-transparent" />
+              
+              <div className="w-16 h-16 rounded-full bg-[#C79A6B]/10 border border-[#C79A6B]/35 flex items-center justify-center mx-auto text-[#C79A6B]">
+                <Bell className="w-7 h-7 animate-bounce" />
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-[9px] uppercase tracking-[0.25em] text-[#C79A6B] font-mono">
+                  System Permission Request
+                </span>
+                <h3 className="font-serif text-xl text-[#F5F2EE] tracking-wide">
+                  Botany Nexus DGC wants to send you notifications.
+                </h3>
+                <p className="text-xs text-[#F5F2EE]/70 font-sans leading-relaxed">
+                  Stay synchronized with real-time field visit alerts, scholarly broadcast announcements, academic journal updates, and crucial department notices from the curator.
+                </p>
+              </div>
+
+              <div className="flex gap-4 pt-2">
+                <button
+                  onClick={async () => {
+                    try {
+                      const permission = await Notification.requestPermission();
+                      if (permission === 'granted') {
+                        const { requestFcmToken } = await import('./lib/firebase');
+                        const token = await requestFcmToken(currentUser?.id || 'guest');
+                        if (currentUser) {
+                          const updatedUser = {
+                            ...currentUser,
+                            fcmToken: token || '',
+                            fcmTokenStatus: 'allowed' as const
+                          };
+                          await updateFirestoreDoc('students', updatedUser);
+                          setCurrentUser(updatedUser);
+                          localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+                        }
+                      } else {
+                        if (currentUser) {
+                          const updatedUser = {
+                            ...currentUser,
+                            fcmTokenStatus: 'blocked' as const
+                          };
+                          await updateFirestoreDoc('students', updatedUser);
+                          setCurrentUser(updatedUser);
+                          localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+                        }
+                      }
+                    } catch (e) {
+                      console.error('Error enabling notifications', e);
+                    }
+                    setShowPermissionPrompt(false);
+                  }}
+                  className="flex-1 py-3 bg-[#C79A6B] hover:bg-[#b08455] text-black text-xs font-mono tracking-widest uppercase transition-all duration-300 rounded cursor-pointer font-bold"
+                >
+                  Allow
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      if (currentUser) {
+                        const updatedUser = {
+                          ...currentUser,
+                          fcmTokenStatus: 'blocked' as const
+                        };
+                        await updateFirestoreDoc('students', updatedUser);
+                        setCurrentUser(updatedUser);
+                        localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+                      }
+                    } catch (e) {
+                      console.error('Error blocking notifications', e);
+                    }
+                    setShowPermissionPrompt(false);
+                  }}
+                  className="flex-1 py-3 bg-transparent hover:bg-white/5 border border-white/10 text-[#F5F2EE]/80 text-xs font-mono tracking-widest uppercase transition-all duration-300 rounded cursor-pointer"
+                >
+                  Block
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Premium Notification Details Dialog (National Geographic Style) */}
+      <AnimatePresence>
+        {selectedNotificationDetail && (
+          <div className="fixed inset-0 bg-[#070707]/90 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.4 }}
+              className="max-w-2xl w-full bg-[#0E0E0E] border border-[#C79A6B]/30 rounded shadow-2xl relative overflow-hidden flex flex-col md:flex-row"
+            >
+              <div className="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-[#C79A6B] to-transparent z-10" />
+              
+              {selectedNotificationDetail.imageUrl && (
+                <div className="w-full md:w-2/5 h-48 md:h-auto relative flex-shrink-0">
+                  <img 
+                    src={selectedNotificationDetail.imageUrl} 
+                    className="w-full h-full object-cover" 
+                    referrerPolicy="no-referrer" 
+                    alt="Notification Cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t md:bg-gradient-to-r from-[#0E0E0E] via-transparent to-transparent" />
+                </div>
+              )}
+              
+              <div className="p-8 flex-grow space-y-6 flex flex-col justify-between">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[9px] font-mono uppercase bg-[#C79A6B]/15 border border-[#C79A6B]/35 text-[#C79A6B] px-2.5 py-1 rounded">
+                      {selectedNotificationDetail.category}
+                    </span>
+                    <span className="text-[10px] font-mono text-[#8F6A48]">
+                      {new Date(selectedNotificationDetail.createdAt).toLocaleDateString()}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="font-serif text-2xl text-[#F5F2EE] tracking-wide leading-snug">
+                      {selectedNotificationDetail.title}
+                    </h4>
+                    <div className="h-[1px] bg-gradient-to-r from-[#C79A6B]/40 to-transparent" />
+                  </div>
+
+                  <p className="text-xs text-[#F5F2EE]/80 leading-relaxed font-sans whitespace-pre-line max-h-[220px] overflow-y-auto pr-2">
+                    {selectedNotificationDetail.message}
+                  </p>
+                </div>
+
+                <div className="pt-4 flex justify-end">
+                  <button
+                    onClick={() => setSelectedNotificationDetail(null)}
+                    className="px-6 py-2 bg-[#C79A6B]/10 hover:bg-[#C79A6B] hover:text-black border border-[#C79A6B]/40 transition-all text-[11px] font-mono tracking-wider uppercase rounded cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Real-time foreground notification toast */}
+      <AnimatePresence>
+        {activeToast && (
+          <motion.div
+            initial={{ opacity: 0, x: 50, y: 50 }}
+            animate={{ opacity: 1, x: 0, y: 0 }}
+            exit={{ opacity: 0, x: 50 }}
+            className="fixed bottom-6 right-6 max-w-sm w-full bg-[#111]/95 backdrop-blur-md border-l-4 border-l-[#C79A6B] border border-white/10 p-4 z-[200] rounded shadow-2xl flex items-start gap-3"
+          >
+            <Bell className="w-5 h-5 text-[#C79A6B] flex-shrink-0 mt-0.5" />
+            <div className="flex-grow space-y-1">
+              <h5 className="text-xs text-white font-semibold font-sans">{activeToast.title}</h5>
+              <p className="text-[11px] text-[#F5F2EE]/70 font-sans leading-relaxed">{activeToast.message}</p>
+            </div>
+            <button onClick={() => setActiveToast(null)} className="text-[#8F6A48] hover:text-white text-xs font-bold font-mono">×</button>
+          </motion.div>
         )}
       </AnimatePresence>
 
