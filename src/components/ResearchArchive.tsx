@@ -12,6 +12,10 @@ interface ResearchArchiveProps {
   plants: Plant[];
   events: DepartmentEvent[];
   gallery: GalleryItem[];
+  initialPlantId?: string | null;
+  initialGalleryId?: string | null;
+  onClearInitialPlant?: () => void;
+  onClearInitialGallery?: () => void;
 }
 
 // Advanced botanical taxonomic mapper based on family
@@ -89,12 +93,48 @@ const getTaxonomy = (family: string) => {
   };
 };
 
-export default function ResearchArchive({ plants, events, gallery }: ResearchArchiveProps) {
+export default function ResearchArchive({ 
+  plants, 
+  events, 
+  gallery,
+  initialPlantId,
+  initialGalleryId,
+  onClearInitialPlant,
+  onClearInitialGallery
+}: ResearchArchiveProps) {
   const [activeTab, setActiveTab] = useState<'Plant Archive' | 'Department Gallery'>('Plant Archive');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFamily, setSelectedFamily] = useState('All');
   const [selectedPlant, setSelectedPlant] = useState<Plant | null>(null);
   const [selectedGallery, setSelectedGallery] = useState<GalleryItem | null>(null);
+
+  // Handle initial/deep-linked plant selection
+  useEffect(() => {
+    if (initialPlantId && plants.length > 0) {
+      const p = plants.find(item => item.id === initialPlantId);
+      if (p) {
+        setSelectedPlant(p);
+        setActiveTab('Plant Archive');
+        const el = document.getElementById('archive');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+        if (onClearInitialPlant) onClearInitialPlant();
+      }
+    }
+  }, [initialPlantId, plants, onClearInitialPlant]);
+
+  // Handle initial/deep-linked gallery selection
+  useEffect(() => {
+    if (initialGalleryId && gallery.length > 0) {
+      const g = gallery.find(item => item.id === initialGalleryId);
+      if (g) {
+        setSelectedGallery(g);
+        setActiveTab('Department Gallery');
+        const el = document.getElementById('archive');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+        if (onClearInitialGallery) onClearInitialGallery();
+      }
+    }
+  }, [initialGalleryId, gallery, onClearInitialGallery]);
 
   // Extract unique families for plants
   const families = useMemo(() => {

@@ -3186,6 +3186,28 @@ export default function AdminPanel({
                           placeholder="Image URL or empty for logo..."
                         />
                       </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block">Deep Link URL / Path</label>
+                        <input 
+                          type="text" 
+                          value={(notificationForm as any).deepLinkUrl || ''}
+                          onChange={(e) => setNotificationForm({ ...notificationForm, deepLinkUrl: e.target.value })}
+                          className="w-full bg-[#111111] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-[#F5F2EE] p-2.5 rounded outline-none font-mono" 
+                          placeholder="e.g. /events/event-id or /plants/plant-id"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-mono text-[#8F6A48] uppercase tracking-widest block">Notice / Reference ID</label>
+                        <input 
+                          type="text" 
+                          value={(notificationForm as any).noticeId || ''}
+                          onChange={(e) => setNotificationForm({ ...notificationForm, noticeId: e.target.value })}
+                          className="w-full bg-[#111111] border border-[#C79A6B]/25 focus:border-[#C79A6B] text-xs text-[#F5F2EE] p-2.5 rounded outline-none font-mono" 
+                          placeholder="Reference notice/object ID..."
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>

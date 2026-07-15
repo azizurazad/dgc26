@@ -11,6 +11,8 @@ interface AcademicNotesProps {
   notes: AcademicNote[];
   onDownloadNote: (id: string) => void;
   isAdmin?: boolean;
+  initialNoteId?: string | null;
+  onClearInitialNote?: () => void;
 }
 
 const CATEGORIES = [
@@ -21,13 +23,13 @@ const CATEGORIES = [
 
 const SUBJECTS = [
   'Plant Physiology', 'Plant Taxonomy', 'Plant Anatomy', 'Plant Ecology', 'Genetics', 
-  'Microbiology', 'Biochemistry', 'Bryophyte', 'Pteridophyte', 'Gymnosperm', 
+  'Microbiology', 'Biochemistry', 'Bryophyte', 'Pteridophyte', 'Gymsomperm', 
   'Angiosperm', 'Plant Pathology', 'Economic Botany', 'Systematic Botany', 'Others'
 ];
 
 const SEMESTERS = ['1st Semester', '2nd Semester', '3rd Semester', '4th Semester', '5th Semester', '6th Semester', '7th Semester', '8th Semester', 'M.S. General', 'Others'];
 
-export default function AcademicNotes({ notes, onDownloadNote }: AcademicNotesProps) {
+export default function AcademicNotes({ notes, onDownloadNote, initialNoteId, onClearInitialNote }: AcademicNotesProps) {
   // Main states
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -52,6 +54,19 @@ export default function AcademicNotes({ notes, onDownloadNote }: AcademicNotesPr
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [selectedNoteForPreview, setSelectedNoteForPreview] = useState<AcademicNote | null>(null);
   const [copiedNoteId, setCopiedNoteId] = useState<string | null>(null);
+
+  // Handle initial/deep-linked note selection
+  useEffect(() => {
+    if (initialNoteId && notes.length > 0) {
+      const n = notes.find(item => item.id === initialNoteId);
+      if (n) {
+        setSelectedNoteForPreview(n);
+        const el = document.getElementById('academic-notes');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+        if (onClearInitialNote) onClearInitialNote();
+      }
+    }
+  }, [initialNoteId, notes, onClearInitialNote]);
 
   // Sync bookmarks
   useEffect(() => {

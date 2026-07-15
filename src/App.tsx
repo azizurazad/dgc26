@@ -162,12 +162,117 @@ export default function App() {
   const [selectedNotificationDetail, setSelectedNotificationDetail] = useState<AppNotification | null>(null);
   const [showPermissionPrompt, setShowPermissionPrompt] = useState<boolean>(false);
 
+  // Deep linking active ID states
+  const [activePlantId, setActivePlantId] = useState<string | null>(null);
+  const [activeGalleryId, setActiveGalleryId] = useState<string | null>(null);
+  const [activeEventId, setActiveEventId] = useState<string | null>(null);
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+
+  // Helper to register student notification token and details with Firestore
+  const updateStudentFcmProfile = async (user: Student, token: string | null, enabled: boolean) => {
+    const ua = navigator.userAgent;
+    const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua);
+    const deviceType = isMobile ? 'mobile' : 'desktop';
+
+    let browser = 'Google Chrome';
+    if (ua.includes("Edg")) {
+      browser = 'Microsoft Edge';
+    } else if (ua.includes("Firefox")) {
+      browser = 'Mozilla Firefox';
+    } else if (ua.includes("Safari") && !ua.includes("Chrome")) {
+      browser = 'Apple Safari';
+    } else if (ua.includes("Opera") || ua.includes("OPR")) {
+      browser = 'Opera';
+    } else if ((navigator as any).brave !== undefined) {
+      browser = 'Brave';
+    }
+
+    const updatedUser: Student = {
+      ...user,
+      fcmToken: token || '',
+      fcmTokenStatus: enabled ? 'allowed' : 'blocked',
+      notificationToken: token || '',
+      deviceType,
+      browser,
+      lastActive: new Date().toISOString(),
+      notificationEnabled: enabled
+    };
+
+    await updateFirestoreDoc('students', updatedUser);
+    setCurrentUser(updatedUser);
+    localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+  };
+
   const [stats, setStats] = useState<AppStats>({
     plantsCount: 0,
     studentsCount: 0,
     resourcesCount: 0,
     fieldVisitsCount: 0
   });
+
+  // State for carrying over deep links if they load before authentication
+  const [pendingDeepLink, setPendingDeepLink] = useState<{ type: string; id: string } | null>(null);
+
+  // Parse deep-linked path on initial load or path detection
+  useEffect(() => {
+    const path = window.location.pathname;
+    if (path && path !== '/') {
+      const match = path.match(/^\/(events|plants|gallery|notes|notifications)\/([a-zA-Z0-9_\-]+)/i);
+      if (match) {
+        const type = match[1].toLowerCase();
+        const id = match[2];
+        console.log(`Parsed deep link path: type=${type}, id=${id}`);
+        
+        // Clean URL immediately so refresh or standard back button navigation works
+        window.history.replaceState({}, '', '/');
+
+        if (isAuthenticated && currentUser) {
+          if (type === 'notifications') {
+            const notif = notifications.find(n => n.id === id);
+            if (notif) {
+              setSelectedNotificationDetail(notif);
+            }
+          } else if (type === 'plants') {
+            setActivePlantId(id);
+          } else if (type === 'gallery') {
+            setActiveGalleryId(id);
+          } else if (type === 'events') {
+            setActiveEventId(id);
+          } else if (type === 'notes') {
+            setActiveNoteId(id);
+          }
+        } else {
+          // Store as pending, and trigger login overlay
+          setPendingDeepLink({ type, id });
+          setIsLoginOpen(true);
+        }
+      }
+    }
+  }, [isAuthenticated, currentUser, notifications]);
+
+  // Execute pending deep link once student successfully authenticates
+  useEffect(() => {
+    if (isAuthenticated && currentUser && pendingDeepLink) {
+      const { type, id } = pendingDeepLink;
+      console.log(`Executing pending deep link: type=${type}, id=${id}`);
+      setPendingDeepLink(null);
+
+      if (type === 'notifications') {
+        const notif = notifications.find(n => n.id === id);
+        if (notif) {
+          setSelectedNotificationDetail(notif);
+        }
+      } else if (type === 'plants') {
+        setActivePlantId(id);
+      } else if (type === 'gallery') {
+        setActiveGalleryId(id);
+      } else if (type === 'events') {
+        setActiveEventId(id);
+      } else if (type === 'notes') {
+        setActiveNoteId(id);
+      }
+    }
+  }, [isAuthenticated, currentUser, pendingDeepLink, notifications]);
 
   // Watch hash change for direct URL mapping
   useEffect(() => {
@@ -314,36 +419,8 @@ export default function App() {
 
   // Notification mutators
   const handleAddNotification = async (notif: AppNotification) => {
-    // 1. Save to Firestore
+    // Save to Firestore, which will automatically trigger the Cloud Function to safely broadcast
     await addFirestoreDoc('notifications', notif);
-
-    // 2. Filter target students and collect their FCM tokens
-    let targetStudentsList = students;
-    if (notif.targetAudience === 'Selected Batch') {
-      targetStudentsList = students.filter(s => s.batch === notif.targetBatch);
-    } else if (notif.targetAudience === 'Selected Students') {
-      targetStudentsList = students.filter(s => notif.targetStudents?.includes(s.id));
-    }
-
-    // Collect all tokens that are defined
-    const fcmTokens = targetStudentsList
-      .map(s => s.fcmToken)
-      .filter((token): token is string => !!token);
-
-    if (fcmTokens.length > 0) {
-      try {
-        const { sendFcmPushNotification } = await import('./lib/firebase');
-        await sendFcmPushNotification(
-          fcmTokens,
-          notif.title,
-          notif.message,
-          notif.category,
-          notif.imageUrl
-        );
-      } catch (err) {
-        console.error('Error broadcasting push notification:', err);
-      }
-    }
   };
   const handleEditNotification = (notif: AppNotification) => {
     updateFirestoreDoc('notifications', notif);
@@ -593,7 +670,7 @@ export default function App() {
     !notif.readBy?.includes(currentUser?.id || '')
   ).length;
 
-  const [activeToast, setActiveToast] = useState<{ title: string; message: string } | null>(null);
+  const [activeToast, setActiveToast] = useState<{ title: string; message: string; clickAction?: string; notificationId?: string } | null>(null);
 
   useEffect(() => {
     // Listen for foreground FCM messages safely
@@ -602,7 +679,9 @@ export default function App() {
         if (payload?.notification) {
           setActiveToast({
             title: payload.notification.title || 'Notification Received',
-            message: payload.notification.body || ''
+            message: payload.notification.body || '',
+            clickAction: payload.data?.click_action || payload.data?.link || '',
+            notificationId: payload.data?.notificationId || ''
           });
           // Auto-dismiss in 6 seconds
           setTimeout(() => {
@@ -613,7 +692,7 @@ export default function App() {
     });
   }, []);
 
-  // Trigger smart notification permission prompt for first time logged-in users
+  // Trigger smart notification permission prompt for first time logged-in users and sync token
   useEffect(() => {
     if (isAuthenticated && currentUser) {
       if (!currentUser.fcmTokenStatus) {
@@ -622,48 +701,37 @@ export default function App() {
           import('./lib/firebase').then(async ({ requestFcmToken }) => {
             const token = await requestFcmToken(currentUser.id);
             if (token) {
-              const updatedUser = {
-                ...currentUser,
-                fcmToken: token,
-                fcmTokenStatus: 'allowed' as const
-              };
-              await updateFirestoreDoc('students', updatedUser);
-              setCurrentUser(updatedUser);
-              localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+              await updateStudentFcmProfile(currentUser, token, true);
             }
           }).catch(err => console.error('Silent FCM registration error:', err));
         } else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
           // Silently set blocked
-          const updatedUser = {
-            ...currentUser,
-            fcmTokenStatus: 'blocked' as const
-          };
-          updateFirestoreDoc('students', updatedUser);
-          setCurrentUser(updatedUser);
-          localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+          updateStudentFcmProfile(currentUser, null, false);
         } else {
           const timer = setTimeout(() => {
             setShowPermissionPrompt(true);
           }, 1500); // Wait 1.5s after login for high-end cinematic feel
           return () => clearTimeout(timer);
         }
-      } else if (currentUser.fcmTokenStatus === 'allowed' && !currentUser.fcmToken) {
-        // Status is allowed but token is missing, retrieve it
+      } else if (currentUser.fcmTokenStatus === 'allowed' && (!currentUser.fcmToken || !currentUser.notificationToken)) {
+        // Status is allowed but token is missing in local state/database, retrieve it
         import('./lib/firebase').then(async ({ requestFcmToken }) => {
           const token = await requestFcmToken(currentUser.id);
           if (token) {
-            const updatedUser = {
-              ...currentUser,
-              fcmToken: token
-            };
-            await updateFirestoreDoc('students', updatedUser);
-            setCurrentUser(updatedUser);
-            localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+            await updateStudentFcmProfile(currentUser, token, true);
           }
         }).catch(err => console.error('Silent token recovery error:', err));
+      } else if (currentUser.fcmTokenStatus === 'allowed') {
+        // Automatically check if token needs periodic refresh or update active state
+        const lastActiveTime = currentUser.lastActive ? new Date(currentUser.lastActive).getTime() : 0;
+        const now = Date.now();
+        // Update lastActive if it's been more than 5 minutes since last check
+        if (now - lastActiveTime > 5 * 60 * 1000) {
+          updateStudentFcmProfile(currentUser, currentUser.fcmToken || null, true);
+        }
       }
     }
-  }, [isAuthenticated, currentUser, students]);
+  }, [isAuthenticated, currentUser]);
 
   return (
     <div className="bg-[#0B0B0B] text-[#F5F2EE] min-h-screen relative font-sans">
@@ -820,7 +888,15 @@ export default function App() {
                 <Philosophy philosophyImage={philosophyImage} />
 
                 {/* Public Botanical Specimen Archive Grid */}
-                <ResearchArchive plants={plants} events={events} gallery={gallery} />
+                <ResearchArchive 
+                  plants={plants} 
+                  events={events} 
+                  gallery={gallery} 
+                  initialPlantId={activePlantId}
+                  initialGalleryId={activeGalleryId}
+                  onClearInitialPlant={() => setActivePlantId(null)}
+                  onClearInitialGallery={() => setActiveGalleryId(null)}
+                />
 
                 {/* Public Interactive Community Registry */}
                 <Community 
@@ -835,10 +911,19 @@ export default function App() {
                 />
 
                 {/* Premium Event Archive & Visual Journal */}
-                <Gallery events={events} />
+                <Gallery 
+                  events={events} 
+                  initialEventId={activeEventId}
+                  onClearInitialEvent={() => setActiveEventId(null)}
+                />
 
                 {/* Premium Academic Notes & PDF Library */}
-                <AcademicNotes notes={academicNotes} onDownloadNote={handleDownloadAcademicNote} />
+                <AcademicNotes 
+                  notes={academicNotes} 
+                  onDownloadNote={handleDownloadAcademicNote} 
+                  initialNoteId={activeNoteId}
+                  onClearInitialNote={() => setActiveNoteId(null)}
+                />
 
                 {/* Advisory Board / Contributors Section */}
                 <section id="contributors" className="relative w-full py-16 md:py-20 bg-[#111111] text-[#F5F2EE] px-6 md:px-12 border-b border-[#C79A6B]/15">
@@ -954,24 +1039,11 @@ export default function App() {
                         const { requestFcmToken } = await import('./lib/firebase');
                         const token = await requestFcmToken(currentUser?.id || 'guest');
                         if (currentUser) {
-                          const updatedUser = {
-                            ...currentUser,
-                            fcmToken: token || '',
-                            fcmTokenStatus: 'allowed' as const
-                          };
-                          await updateFirestoreDoc('students', updatedUser);
-                          setCurrentUser(updatedUser);
-                          localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+                          await updateStudentFcmProfile(currentUser, token, true);
                         }
                       } else {
                         if (currentUser) {
-                          const updatedUser = {
-                            ...currentUser,
-                            fcmTokenStatus: 'blocked' as const
-                          };
-                          await updateFirestoreDoc('students', updatedUser);
-                          setCurrentUser(updatedUser);
-                          localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+                          await updateStudentFcmProfile(currentUser, null, false);
                         }
                       }
                     } catch (e) {
@@ -987,13 +1059,7 @@ export default function App() {
                   onClick={async () => {
                     try {
                       if (currentUser) {
-                        const updatedUser = {
-                          ...currentUser,
-                          fcmTokenStatus: 'blocked' as const
-                        };
-                        await updateFirestoreDoc('students', updatedUser);
-                        setCurrentUser(updatedUser);
-                        localStorage.setItem('dgc_portal_user', JSON.stringify(updatedUser));
+                        await updateStudentFcmProfile(currentUser, null, false);
                       }
                     } catch (e) {
                       console.error('Error blocking notifications', e);
@@ -1079,14 +1145,60 @@ export default function App() {
             initial={{ opacity: 0, x: 50, y: 50 }}
             animate={{ opacity: 1, x: 0, y: 0 }}
             exit={{ opacity: 0, x: 50 }}
-            className="fixed bottom-6 right-6 max-w-sm w-full bg-[#111]/95 backdrop-blur-md border-l-4 border-l-[#C79A6B] border border-white/10 p-4 z-[200] rounded shadow-2xl flex items-start gap-3"
+            onClick={() => {
+              if (activeToast.clickAction) {
+                let relativePath = activeToast.clickAction;
+                if (relativePath.startsWith('http')) {
+                  try {
+                    const url = new URL(relativePath);
+                    relativePath = url.pathname;
+                  } catch (e) {
+                    console.error("Invalid URL in clickAction:", e);
+                  }
+                }
+                const match = relativePath.match(/^\/(events|plants|gallery|notes|notifications)\/([a-zA-Z0-9_\-]+)/i);
+                if (match) {
+                  const type = match[1].toLowerCase();
+                  const id = match[2];
+                  if (type === 'notifications') {
+                    const notif = notifications.find(n => n.id === id);
+                    if (notif) {
+                      setSelectedNotificationDetail(notif);
+                    }
+                  } else if (type === 'plants') {
+                    setActivePlantId(id);
+                  } else if (type === 'gallery') {
+                    setActiveGalleryId(id);
+                  } else if (type === 'events') {
+                    setActiveEventId(id);
+                  } else if (type === 'notes') {
+                    setActiveNoteId(id);
+                  }
+                }
+              }
+              setActiveToast(null);
+            }}
+            className="fixed bottom-6 right-6 max-w-sm w-full bg-[#111]/95 backdrop-blur-md border-l-4 border-l-[#C79A6B] border border-white/10 p-4 z-[200] rounded shadow-2xl flex items-start gap-3 cursor-pointer hover:bg-white/5 transition-all"
           >
             <Bell className="w-5 h-5 text-[#C79A6B] flex-shrink-0 mt-0.5" />
             <div className="flex-grow space-y-1">
               <h5 className="text-xs text-white font-semibold font-sans">{activeToast.title}</h5>
               <p className="text-[11px] text-[#F5F2EE]/70 font-sans leading-relaxed">{activeToast.message}</p>
+              {activeToast.clickAction && (
+                <span className="text-[9px] font-mono text-[#C79A6B] uppercase tracking-wider block pt-1">
+                  Click to View &rarr;
+                </span>
+              )}
             </div>
-            <button onClick={() => setActiveToast(null)} className="text-[#8F6A48] hover:text-white text-xs font-bold font-mono">×</button>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveToast(null);
+              }} 
+              className="text-[#8F6A48] hover:text-white text-xs font-bold font-mono"
+            >
+              ×
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

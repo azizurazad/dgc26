@@ -32,18 +32,30 @@ messaging.onBackgroundMessage((payload) => {
 // Self listener for click events to open corresponding pages
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const clickAction = event.notification.data?.click_action || '/';
+  
+  const data = event.notification.data || {};
+  const clickAction = data.click_action || data.link || '/';
+  
+  // Resolve relative deep link to absolute URL relative to the origin of the worker
+  const targetUrl = clickAction.startsWith('http') 
+    ? clickAction 
+    : new URL(clickAction, self.location.origin).href;
   
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      // Look for any existing open window under our site's domain
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
         if (client.url && 'focus' in client) {
+          if ('navigate' in client) {
+            client.navigate(targetUrl);
+          }
           return client.focus();
         }
       }
+      // If no open browser tabs exist, open a new window with the deep link path
       if (clients.openWindow) {
-        return clients.openWindow(clickAction);
+        return clients.openWindow(targetUrl);
       }
     })
   );

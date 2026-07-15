@@ -9,14 +9,29 @@ import { DepartmentEvent } from '../types';
 
 interface GalleryProps {
   events: DepartmentEvent[];
+  initialEventId?: string | null;
+  onClearInitialEvent?: () => void;
 }
 
-export default function Gallery({ events }: GalleryProps) {
+export default function Gallery({ events, initialEventId, onClearInitialEvent }: GalleryProps) {
   // State variables
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedFilter, setSelectedFilter] = useState<string>('All');
   const [selectedEvent, setSelectedEvent] = useState<DepartmentEvent | null>(null);
+
+  // Handle initial/deep-linked event selection
+  useEffect(() => {
+    if (initialEventId && events.length > 0) {
+      const ev = events.find(item => item.id === initialEventId);
+      if (ev) {
+        setSelectedEvent(ev);
+        const el = document.getElementById('gallery');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+        if (onClearInitialEvent) onClearInitialEvent();
+      }
+    }
+  }, [initialEventId, events, onClearInitialEvent]);
   
   // Lightbox States
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);

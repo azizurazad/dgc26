@@ -47,6 +47,11 @@ export interface Student {
   isTemporaryPassword?: boolean;
   fcmToken?: string;
   fcmTokenStatus?: 'allowed' | 'blocked';
+  notificationToken?: string;
+  deviceType?: string;
+  browser?: string;
+  lastActive?: string;
+  notificationEnabled?: boolean;
 }
 
 export interface GalleryItem {
